@@ -1,107 +1,151 @@
+# Code adapted from https://github.com/kelseyywang/reddit-notifs
+# https://www.freecodecamp.org/news/make-a-custom-reddit-notification-system-with-python-4dd560667b35/
+import time
 import praw
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from praw.models import MoreComments
+from datetime import datetime
+from constants import (
+    SUBREDDIT,
+    NUM_POSTS,
+    KEYWORD_GROUPS,
+    SLEEP_TIMER,
+)
+
 import secrets
 
-SUBREDDIT_TO_EXPLORE = 'askreddit'
-NUM_POSTS_TO_EXPLORE = 10
-SCORE_WEIGHT = 3
-COMMENT_WEIGHT = 1
-# The following is the minimum relevant weighted score to be a match, 
-# where weighted score = SCORE_WEIGHT * score + COMMENT_WEIGHT * num comments
-MIN_RELEVANT_WEIGHTED_SCORE = 20
-# The following tuple contains 1. list of required terms/stems, 2. list of secondary terms, 
-# 3. min number of secondary terms needed to be a match
-KEYWORDS_GROUP = (['conspiracy'], ['true', 'crazy', 'real'], 1)
 
-# Returns a count of secondary terms if is relevant, -1 otherwise
-def get_keyword_count(str):
-    keyword_count = 0
-    required, secondary, min_secondary = KEYWORDS_GROUP
-    for required_term in required:
-        if required_term not in str:
+class RedditNotifications:
+    def __init__(self):
+        self.processed = []
+        self.reddit = self.auth()
+
+    def check_posts(self):
+        print(f"Checking Reddit posts @ {str(datetime.now().strftime('%m/%d/%Y, %H:%M:%S'))} ...")
+        if matching_posts := self.get_posts():
+            content = ""
+            for keyword_count, post in matching_posts:
+                # Append info for this relevant post to the email content
+                content += f"""
+                    {post['created']} | {post['flair']}
+                    <br />
+                    {post['title']}
+                    <br><br>
+                    Comments ({post['comment_count']}):<br>
+                    {post['comments']}<br>
+                    {post['url']}
+                    <br><br>
+                    <hr><br>
+                """
+            if len(matching_posts) > 0:
+                print(f"{len(matching_posts)} Matching post(s) found, sending email")
+                RedditNotifications.send_email(content)
+
+    def get_posts(self):
+        """ Returns tuples containing keyword count & post info dict of matching posts """
+
+        # Designate subreddit to explore
+        subreddit = self.reddit.subreddit(SUBREDDIT)
+        matching_posts = []
+        # Explore new posts in subreddit
+        for submission in subreddit.new(limit=NUM_POSTS):
+            if submission.id in self.processed:
+                pass
+            title = submission.title
+            for keywords in KEYWORD_GROUPS:
+                keyword_count = RedditNotifications.get_keyword_count(title.lower(), keywords)
+                if keyword_count != -1:
+                    comment_count = len(list(submission.comments))
+                    if submission.id not in self.processed and comment_count >= 2:
+                        comments = []
+                        for comment in submission.comments:
+                            if isinstance(comment, MoreComments):
+                                continue
+                            comment_html = f"""
+                            {comment.author} ({comment.author_flair_text}) | 
+                            {datetime.utcfromtimestamp(comment.created_utc).strftime('%Y-%m-%d %H:%M:%S')}
+                            <br>
+                            {comment.body_html}
+                            <br>
+                            =======
+                            <br>
+                            """
+                            comments.append(comment_html)
+                        post_dict = {
+                            "id": submission.id,
+                            "title": title,
+                            "created": datetime.utcfromtimestamp(submission.created_utc).strftime('%Y-%m-%d %H:%M:%S'),
+                            "flair": submission.link_flair_text,
+                            "keyword_count": keyword_count,
+                            "url": f"https://www.reddit.com{submission.permalink}",
+                            "comment_count": comment_count,
+                            "comments": ''.join(comments),
+                        }
+                        self.processed.append(submission.id)
+                        matching_posts.append((keyword_count, post_dict))
+        # Sort asc by the keyword count
+        matching_posts.sort(key=lambda x: x[0])
+        return matching_posts
+
+    @staticmethod
+    def auth():
+        return praw.Reddit(
+            client_id=secrets.MY_CLIENT_ID,
+            client_secret=secrets.MY_CLIENT_SECRET,
+            user_agent=secrets.MY_USER_AGENT,
+            username=secrets.MY_REDDIT_USERNAME,
+            password=secrets.MY_REDDIT_PASSWORD,
+        )
+
+    @staticmethod
+    def get_keyword_count(search, keywords):
+        """Returns a count of secondary terms if is relevant, -1 otherwise"""
+
+        keyword_count = 0
+        # required, secondary, min_secondary = KEYWORDS_GROUP
+        required, secondary, min_secondary = keywords
+        for required_term in required:
+            if required_term not in search:
+                return -1
+        for secondary_term in secondary:
+            if secondary_term in search:
+                # A secondary term was found, so add to keyword_count
+                keyword_count += 1
+        if keyword_count < min_secondary:
             return -1
-    for secondary_term in secondary:
-        if secondary_term in str:
-            # A secondary term was found, so add to keyword_count
-            keyword_count += 1
-    if keyword_count < min_secondary:
-        return -1
-    return keyword_count
+        return keyword_count
 
-# Returns tuples containing keyword count, weighted score, post info dict of matching posts
-def get_reddit_posts():
-    # Authenticate
-    reddit = praw.Reddit(client_id=secrets.MY_CLIENT_ID,
-                         client_secret=secrets.MY_CLIENT_SECRET,
-                         user_agent=secrets.MY_USER_AGENT,
-                         username=secrets.MY_REDDIT_USERNAME,
-                         password=secrets.MY_REDDIT_PASSWORD)
-    # Designate subreddit to explore
-    subreddit = reddit.subreddit(SUBREDDIT_TO_EXPLORE)
-    matching_posts_info = []
-    # Explore rising posts in subreddit and store info if is relevant and popular enough
-    # Tip: You could also explore top posts, new posts, etc.
-    # See https://praw.readthedocs.io/en/latest/getting_started/quick_start.html#obtain-submission-instances-from-a-subreddit
-    for submission in subreddit.rising(limit=NUM_POSTS_TO_EXPLORE):
-        keyword_count = get_keyword_count(submission.title.lower())
-        weighted_score = SCORE_WEIGHT * submission.score + COMMENT_WEIGHT * len(list(submission.comments))
-        if keyword_count != -1 and weighted_score > MIN_RELEVANT_WEIGHTED_SCORE:
-            post_dict = {'title': submission.title, \
-            'score': submission.score, \
-            'url': submission.url, \
-            'comment_count': len(list(submission.comments))}
-            matching_posts_info.append((keyword_count, weighted_score, post_dict))
-    # Sort asc by the keyword count, then desc by weighted score (can't sort by post_dict)
-    matching_posts_info.sort(key=lambda x: (x[0], -1 * x[1]))
-    return matching_posts_info
-
-# Send email of matching posts
-def send_email():
-    matching_posts_info = get_reddit_posts()
-    reddit_email_content = ''
-    for keyword_count, weighted_score, post in matching_posts_info:
-        # Append info for this relevant post to the email content
-        reddit_email_content += post['title'] + '<br>' + 'Score: ' + str(post['score']) + \
-        '<br>' + 'Comments: ' + str(post['comment_count']) + '<br>' + post['url'] + '<br><br>'
-    if len(matching_posts_info) > 0:
+    @staticmethod
+    def send_email(content):
         email_list = [
             secrets.RECEIVER_EMAIL
             # Add any other email addresses to send to
         ]
-        subject = 'Hey you! I have something SPECIAL for you to check out...'
-        # Port 587 is used when sending emails from an app with TLS required
-        # See https://support.google.com/a/answer/176600?hl=en
-        server = smtplib.SMTP('smtp.gmail.com:587')
+        subject = f"New `r/{SUBREDDIT}` posts @ {str(datetime.now().strftime('%m/%d/%Y, %H:%M:%S'))}"
+        server = smtplib.SMTP("smtp.mail.yahoo.com", 587)
         server.ehlo()
         server.starttls()
+        server.ehlo()
         server.login(secrets.SENDER_EMAIL, secrets.SENDER_PASSWORD)
         for email_address in email_list:
             # Send emails in multiple part messages
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = subject
-            msg['From'] = secrets.SENDER_EMAIL
-            msg['To'] = email_address
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = secrets.SENDER_EMAIL
+            msg["To"] = email_address
             # HTML of email content
-            html = '''\
-            <html>
-              <head></head>
-              <body>
-                <p>
-                    <b style='font-size:20px'>Hello to my favorite person!</b><br><br>
-                    I am ecstatic to report that the following posts may be of interest to you:<br>
-                </p>
-                %s
-                <p>
-                    <b style='font-size:20px'>With love from your reddit notification script <span style='color:#e06d81'>♥</span></b>
-                </p>
-              </body>
-            </html>
-            ''' % reddit_email_content
-            msg.attach(MIMEText(html, 'html'))
+            html = f"<html><head></head><body>{content}</body></html>"
+            msg.attach(MIMEText(html, "html"))
             server.sendmail(secrets.SENDER_EMAIL, email_address, msg.as_string())
         server.quit()
 
+
 if __name__ == "__main__":
-    send_email()
+    start_time = time.time()
+    reddit = RedditNotifications()
+
+    while True:
+        reddit.check_posts()
+        time.sleep(SLEEP_TIMER - ((time.time() - start_time) % SLEEP_TIMER))
