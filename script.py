@@ -147,5 +147,9 @@ if __name__ == "__main__":
     reddit = RedditNotifications()
 
     while True:
-        reddit.check_posts()
+        try:
+            reddit.check_posts()
+        except Exception as e:
+            print(e)
+            continue
         time.sleep(SLEEP_TIMER - ((time.time() - start_time) % SLEEP_TIMER))
