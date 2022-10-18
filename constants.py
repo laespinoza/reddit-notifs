@@ -11,10 +11,14 @@ KEYWORDS_GROUP_OMEGA = (
     ["omega"],
     [
         "speedmaster",
-        "moonwatch",
+        "moon",
         "sandwich",
         "sapphire",
         "hesalite",
+
+        # DSotM
+        "meteorite",
+        "311.63.44.51.99.001",
 
         # cal 3861
         "3861",
@@ -41,14 +45,13 @@ KEYWORDS_GROUP_OMEGA = (
     ],
     2,
 )
-KEYWORDS_GROUP_HAMILTON = (
-    ["hamilton"],
+KEYWORDS_GROUP_ZELOS = (
+    ["zelos"],
     [
-        "khaki field automatic",
-        "kfa",
-        "H70555533",
+        "meteorite",
+        "meteor",
     ],
-    1,
+    2,
 )
 KEYWORDS_GROUP_MISC = (
     [],
@@ -60,4 +63,4 @@ KEYWORDS_GROUP_MISC = (
     ],
     1
 )
-KEYWORD_GROUPS = [KEYWORDS_GROUP_OMEGA, KEYWORDS_GROUP_HAMILTON, KEYWORDS_GROUP_MISC]
+KEYWORD_GROUPS = [KEYWORDS_GROUP_OMEGA, KEYWORDS_GROUP_ZELOS, KEYWORDS_GROUP_MISC]
